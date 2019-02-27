@@ -18,8 +18,8 @@
  * Die LED's signalisieren den Ladezustand des Akkus.
  * Bei weniger als 10,5 Volt wird der Akku mittels Relais abgeschaltet.
  * In Zeile 1 kann ein "Kunde" bzw. eine "Kunden-Nr." eingetragen werden.
- * Die Signalauswertung wird über ein Zeit/Spannungsfenster realisiert.
- * Der ursprüngliche Code stammt aus dem Artikel "Spuren hinterlassen - Datenlogging mit Arduino" von Michael Stal (https://heise.de/-3348205).
+ * Die Signalauswertung wird Ã¼ber ein Zeit/Spannungsfenster realisiert.
+ * Der ursprÃ¼ngliche Code stammt aus dem Artikel "Spuren hinterlassen - Datenlogging mit Arduino" von Michael Stal (https://heise.de/-3348205).
  */
 
 #include "Arduino.h"
@@ -29,34 +29,44 @@
 #include "SdFat.h"
 #include "DallasTemperature.h"
 #include "OneWire.h"
-#include <TimeLib.h>
-#include <DS1307RTC.h>
+#include "TimeLib.h"
+#include "DS1307RTC.h"
 
-
-
+////////////////////////////////
+// DEBUG
+///////////////////////////////
+#define DEBUG
+#ifdef DEBUG
+    #define DPRINT(...) Serial.print(__VA_ARGS__)
+    #define DPRINTLN(...) Serial.println(__VA_ARGS__)
+  #else
+    #define DPRINT(...)
+    #define DPRINTLN(...)
+#endif
+  
 /////////////////////////////////////////////////////////////////
 // Timer / Zeiten in Millisekunden
 /////////////////////////////////////////////////////////////////
-#define			Time2SDwrite			60000		// Zeit zwischen 2 Schreibvorgängen auf SD-Karte
+#define			Time2SDwrite			60000		// Zeit zwischen 2 SchreibvorgÃ¤ngen auf SD-Karte
 #define			Time2SDend				300			// Zeit bis Abschaltung nach Entfernung SD-Karte
-#define			Time2SDcheck			13000		// Zeit zwischen 2 SD-Karten Prüfungen
+#define			Time2SDcheck			13000		// Zeit zwischen 2 SD-Karten PrÃ¼fungen
 
 #define			Time2Measure			1000		// Zeit zwischen 2 Messungen (Spannung, Temperatur)
-#define			Time2Serial				1000		// Zeit bis zur nächsten Ausgabe am seriellen Montior
+#define			Time2Serial				1000		// Zeit bis zur nÃ¤chsten Ausgabe am seriellen Montior
 
 #define			Time2AutoMute			300	//150		// Zeit bis zur Aktivierung der automatischen Stummschaltung nach Sprechende
 
-#define			Time2MuteBlink			300			// Blink-Puls-Pause-Verhältnis für manuelle Stummschaltung
-#define			Time2AlarmBlink			500			// Blink-Puls-Pause-Verhältnis für alarmierende Spannung
-#define			Time2KritBlink			200			// Blink-Puls-Pause-Verhältnis für kritische Spannung
+#define			Time2MuteBlink			300			// Blink-Puls-Pause-VerhÃ¤ltnis fÃ¼r manuelle Stummschaltung
+#define			Time2AlarmBlink			500			// Blink-Puls-Pause-VerhÃ¤ltnis fÃ¼r alarmierende Spannung
+#define			Time2KritBlink			200			// Blink-Puls-Pause-VerhÃ¤ltnis fÃ¼r kritische Spannung
 #define			Time2Abschalt			10000
 
-#define			Time2Zaehlen			100			// Zeitvorgabe (in Millisekunden) zwischen den Zählerstunden, siehe nächsten Abschnitt
+#define			Time2Zaehlen			100			// Zeitvorgabe (in Millisekunden) zwischen den ZÃ¤hlerstunden, siehe nÃ¤chsten Abschnitt
 
 /////////////////////////////////////////////////////////////////
-// Zählvorgaben für Signalauswertung
+// ZÃ¤hlvorgaben fÃ¼r Signalauswertung
 /////////////////////////////////////////////////////////////////
-#define			ZAEHLER_AN				20  //30				// Diese Variable sorgt für Einschaltverzögerung/sicherer Signalerkennung bei anliegendem Signal.
+#define			ZAEHLER_AN				20  //30				// Diese Variable sorgt fÃ¼r EinschaltverzÃ¶gerung/sicherer Signalerkennung bei anliegendem Signal.
 #define			ZAEHLER_AUS				250 //200				// Rechenbeispiel: Zahler_AN * Time2Zaehlen (z.B. 30 * 100ms = 3000ms = 3s)
 
 /////////////////////////////////////////////////////////////////
@@ -69,8 +79,8 @@
 #define			Relais					8	// Einschaltrelais Hauptspannung
 #define			monoflopPin				A3	// Port, an den der Monoflop-Ausgang angeschlossen wird
 #define			TemperaturPin			2	// DS1820 Temperatursensor
-#define			MutePin					9	// Betätigungstaste für Stummschaltung, Eingang
-#define			SwitchMutePin			3	// Relais für Stummschaltung, Ausgang
+#define			MutePin					9	// BetÃ¤tigungstaste fÃ¼r Stummschaltung, Eingang
+#define			SwitchMutePin			3	// Relais fÃ¼r Stummschaltung, Ausgang
 
 /////////////////////////////////////////////////////////////////
 // Definition der Wertebereiche
@@ -80,10 +90,10 @@
 /*
  * Festlegung der Mikrofonwerte:
  * Mittenwert:	28
- * Toleranz:	+/- 100 = (Wertbereich) +128 / -72 für AUS! (innerhalb)
- * Min-/Max-Toleranz: +/- 350 = (Wertbereich) +378 / -322 für EIN! (außerhalb)
+ * Toleranz:	+/- 100 = (Wertbereich) +128 / -72 fÃ¼r AUS! (innerhalb)
+ * Min-/Max-Toleranz: +/- 350 = (Wertbereich) +378 / -322 fÃ¼r EIN! (auÃŸerhalb)
  */
-#define			SIGNAL_MITTE			28L // Ohne Wertigkeit (V, A o.ä.), da keine Umrechnung möglich oder nötig (L stehen lassen, da Vorzeichen-behaftete Berechnung)
+#define			SIGNAL_MITTE			28L // Ohne Wertigkeit (V, A o.Ã¤.), da keine Umrechnung mÃ¶glich oder nÃ¶tig (L stehen lassen, da Vorzeichen-behaftete Berechnung)
 #define			TOLERANZ_AUS			180L//200L // Aus-Wertbereich, bei dem jeweils von der Mitte aus gesehen, ausgeschaltet werden soll.
 #define			TOLERANZ_EIN			350L//500L // Ein-Wertbereich, bei dem jeweils von der Mitte aus gesehen, eingeschaltet werden soll.
 
@@ -118,7 +128,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////
 
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-// Diesen Abschnitt NICHT ändern!!!!!!!!!!!!!
+// Diesen Abschnitt NICHT Ã¤ndern!!!!!!!!!!!!!
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 /////////////////////////////////////////////////////////////////
@@ -129,7 +139,7 @@
 #define			TemperaturZeichen		'C'
 #define			AnzahlDezimalStellen 	4
 
-#define			SEP						F(";") // Trennzeichen für Dateiausgabe
+#define			SEP						F(";") // Trennzeichen fÃ¼r Dateiausgabe
 #define			error(msg) sd.errorHalt(F(msg)) // Fehlermeldungen im Flash ablegen.
 
 #define			chipSelect				SS // Chip Select auf Arduino Board
@@ -173,7 +183,7 @@ bool Signal_AUS(int32_t SignalSpg)
 	return (SignalSpg > (SIGNAL_MITTE - TOLERANZ_AUS)  && SignalSpg < (SIGNAL_MITTE + TOLERANZ_AUS));
 }
 
-void dateTime(uint16_t* date, uint16_t* time) // Callback-Funktion für Datum/Uhrzeit der Datei
+void dateTime(uint16_t* date, uint16_t* time) // Callback-Funktion fÃ¼r Datum/Uhrzeit der Datei
 {
 	DateTime now = rtc.now();
 	*date = FAT_DATE(now.year(), now.month(), now.day());
@@ -266,7 +276,7 @@ void initSDCardReader(void)		// Kartenleser initialisieren
 	if (!datei.open(dateiName, O_CREAT | O_WRITE | O_EXCL))
 		{
 			digitalWrite(LEDgn, LOW);
-			error("Datei \366ffnen misslungen!"); // Jetzt öffnen:
+			error("Datei \366ffnen misslungen!"); // Jetzt Ã¶ffnen:
 		}
 	else
 	{
@@ -389,11 +399,11 @@ void SerialMonitor(const bool &Signal,const float &Spannungswert,const float &Te
 	if (timing(_Serial)) // jede x Sekunden Daten auf seriellem Port ausgeben
 	{
 		ZeitAusgeben(&jetzt); // Datum/Uhrzeit schreiben am seriellen Monitor
-		WertAusgeben("Spannung: ", Spannungswert, " V="); //Endgültigen Spannungswert im seriellen Monitor anzeigen
+		WertAusgeben("Spannung: ", Spannungswert, " V="); //EndgÃ¼ltigen Spannungswert im seriellen Monitor anzeigen
 		WertAusgeben("Temperatur: ",Temperatur," \260C");
 		Serial.print(Signal == AN ? "Signal" : "- -- -");
 		Serial.println(stumm == AN ? " Auto-Stumm" : " LAUT");
-		Serial.print("Signalstärke: ");
+		Serial.print("SignalstÃ¤rke: ");
 		Serial.println(SignalSpg);
 		timing(reset);
 	}
@@ -513,8 +523,7 @@ uint8_t Auswertung(const bool &Spannung,const uint8_t &Mute_Signal)
 void setup()
 {
 	Serial.begin(115200); // Serielle Kommunikation an
-	Serial.println("Serial begin");
-
+  DPRINTLN("[0/7] Serial begin");
 	pinMode(LEDgn, OUTPUT);
 	digitalWrite(LEDgn, HIGH);
 	pinMode(LEDge, OUTPUT);
@@ -524,6 +533,8 @@ void setup()
 	pinMode(monoflopPin, INPUT_PULLUP);
 	pinMode(MutePin, OUTPUT);
 	pinMode(SwitchMutePin, INPUT_PULLUP);
+ 
+  DPRINTLN("[1/7] Initializing RTC");
 
 	initRTC();          // Echtzeituhr initialisieren
 	setSyncProvider(RTC.get);   // the function to get the time from the RTC
@@ -531,14 +542,30 @@ void setup()
 	if (timeStatus() != timeSet) Serial.println("Unable to sync with the RTC");
 	else Serial.println("RTC has set the system time");
 
+  DPRINTLN("[2/7] RTC initialized. Initializing SD-Card");
+
 	initSDCardReader(); // SD Card initialisieren
+
+  DPRINTLN("[3/7] Starting temperature sensor");
+	
 	OneWireSensor.begin();		// Temperatursensor initialisieren
+
+  DPRINTLN("[4/7] Requesting temperatures...");
+
 	OneWireSensor.requestTemperatures();
 	delay(600);
 	OneWireSensor.requestTemperatures();
+  
+  DPRINTLN("[5/7] Request sent. Activating Relay.");
+	
 	OneWireSensor.setWaitForConversion(false);
 	digitalWrite(Relais, HIGH);
+
+  DPRINTLN("[6/7] Relay active. Syncing time from RTC.");
+
 	jetzt = rtc.now();
+
+  DPRINTLN("[7/7] Setup complete, entering loop.");
 }
 
 void loop()
@@ -563,7 +590,7 @@ void loop()
 			setTime(t);
 		}
 	}
-// alle x-Sekunden auf SD-Karte prüfen
+// alle x-Sekunden auf SD-Karte prÃ¼fen
 
 	if (timing(_SDcheck))
 	{
@@ -582,7 +609,7 @@ void loop()
 
 	SerialMonitor(SignalZustand, Spannung, Temperatur, Signal, autoStumm);
 
-// Stummschaltung(Mute) mit grüner LED blinkend!!!
+// Stummschaltung(Mute) mit grÃ¼ner LED blinkend!!!
 	if (stumm && timing(_MuteBlink))
 	{
 		Blinken(LEDgn);
@@ -626,7 +653,7 @@ void loop()
 	// Es wird in Zeitabschnitten ausgewertet. 1 Abschnitt entspricht 1 Sekunde
 	SignalZustand = Auswertung(!(VOLT_AUS(Spannung)||VOLT_TEST(Spannung)), autoStumm);
 
-	// Daten schreiben, wenn a) SD-Karte vorhanden UND b1)Zeit abgelaufen ODER b2)Änderung im Signal
+	// Daten schreiben, wenn a) SD-Karte vorhanden UND b1)Zeit abgelaufen ODER b2)Ã„nderung im Signal
 	if (SDcheck && !(VOLT_AUS(Spannung) || VOLT_TEST(Spannung)) && (timing(_SDwrite) || SignalZustand != alterZustand ))
 	{
 		schreibeMessung(Temperatur, jetzt, Spannung, SignalZustand, autoStumm);
